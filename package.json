@@ -1,0 +1,11 @@
+{
+  "name": "@cockroachzl/stock-booker-bluebird",
+  "version": "1.0.0",
+  "description": "Fetch stock price ticks and persist in datastore",
+  "main": "index.js",
+  "scripts": {
+    "test": "mocha test"
+  },
+  "author": "Liang Zhang",
+  "license": "ISC"
+}
