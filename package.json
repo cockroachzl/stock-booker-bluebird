@@ -7,5 +7,18 @@
     "test": "mocha test"
   },
   "author": "Liang Zhang",
-  "license": "ISC"
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cockroachzl/stock-booker-bluebird.git"
+  },
+  "bugs": {
+    "url": "https://github.com/cockroachzl/stock-booker-bluebird/issues"
+  },
+  "homepage": "https://github.com/cockroachzl/stock-booker-bluebird#readme",
+  "dependencies": {
+    "bluebird": "^2.9.34",
+    "moment": "^2.10.5",
+    "mongodb": "^2.0.39"
+  }
 }
