@@ -10,144 +10,17 @@ var moment = require('moment');
 var Promise = require("bluebird");
 var MongoDB = Promise.promisifyAll(require("mongodb"));
 
-//Promise.resolve(200).then(console.log.bind(console));
-//console.log(global.Promise == Promise);
-var mongoConnection = MongoDB.MongoClient.connectAsync('mongodb://@localhost:27017/stock');
-var findOnePromise = mongoConnection
-    .then(function (db) {
-        return db.collectionAsync('stocks');
-    })
-    .then(function (collection){
-        return collection.findOneAsync();
-    })
-    .tap(console.log)
-    .catch(function (error) {
-        console.error(error);
-    })
-    //.finally(function () {
-    //    return mongoConnection.then(function (db) {
-    //        db.close();
-    //    })
-    //});
-var findPromise = mongoConnection
-.then(function(db) {
-        return db.collection('stocks').findAsync();
-    })
-.then(function(cursor){
-        return cursor.toArrayAsync();
-    })
-.tap(console.log)
-.catch(console.error);
-Promise.all([mongoConnection, findOnePromise, findPromise]).spread(function(db){ //second argument is omitted.
-        return db.close();
-})
-//var MongoDB = require("mongodb");
-//MongoDB.MongoClient.connect('mongodb://@localhost:27017/stock')
-//    .then(function(db){
-//        console.log(db);
-//        return db.close();
-//    })
-//MongoDB.MongoClient.connect('mongodb://@localhost:27017/stock', function(err, db){
-//    console.log(db);
-//    db.close();
-//})
 
 //stocks: stock static info: symbols
 //intraday_quotes : quotes within the current day
 //interday_quotes : historicall quotes
 //population: date, populated
-function StockFetcher() {
-    this.db = mongoConnection;
+function StockFetcher(dbConnPromise) {
+    this.dbConnPromise = !!dbConnPromise ? dbConnPromise : MongoDB.MongoClient.connectAsync('mongodb://@localhost:27017/stock');
     this.symbols = [];
 }
 
 StockFetcher.BASE = 'http://query.yahooapis.com/v1/public/yql';
-
-//StockFetcher.prototype.insertPromise = function (collectionName, quotes) {
-//    var that = this;
-//    var promise = new Promise(function (resolve, reject) {
-//        var collection = that.db.collection(collectionName);
-//        console.log("insert into " + collectionName);
-//        // Insert some documents
-//        collection.insert(quotes, function (err, results) {
-//            if (err) {
-//                reject(err);
-//            }
-//            else {
-//                resolve(results);
-//            }
-//        });
-//    });
-//    return promise;
-//}
-
-//StockFetcher.prototype.findOnePromise = function (collectionName, query) {
-//    var that = this;
-//    var promise = new Promise(function (resolve, reject) {
-//        var collection = that.db.collection(collectionName);
-//        console.log("find one from " + collectionName);
-//        collection.findOne(query, function (err, result) {
-//            if (err) {
-//                reject(err);
-//            }
-//            else {
-//                resolve(result);
-//            }
-//        });
-//    });
-//    return promise;
-//}
-
-StockFetcher.prototype.updateUsingPromise = function (stocksCollectionName, intradayQuotesCollectionname,
-                                                      interdayQuotesCollectionName, populationCollectionName) {
-    var that = this;
-    //var stocksPromise = this.findOnePromise(stocksCollectionName, {}).then(function (value) {
-    //    return value.symbols;
-    //});
-    var stocksPromise = this.db.then(function (db) {
-        return db.collection(stocksCollectionName).findOneAsync();
-    })
-    if (StockFetcher.isMarketOpen()) {
-        return stocksPromise
-            .then(StockFetcher.fetch) //fetch stock quotes
-            .then(function (quotes) { //insert into intraday collection
-                return this.db.then(function (db) {
-                    return db.collectionAsync(intradayQuotesCollectionname)
-                }).then(function (collection) {
-                    return collection.insertManyAsync(quotes);
-                })
-            });
-    }
-    var now = moment().utcOffset(-4);
-    //var date = [now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()].join('-');
-    if (now.hours() < 10) { //next early morning
-        now.subtract(1, 'days');
-    }
-    var date = now.format('YYYY-MM-DD');
-    //var populationPromise = this.findOnePromise(populationCollectionName, );
-    var populationPromise = this.db.then(function (db) {
-        return db.collectionAsync(populationCollectionName)
-    }).then(function (collection) {
-        return collection.findOneAsync({'date': date});
-    })
-    //Resume
-    return populationPromise.then(function (value) {
-        if (!value) {
-            console.log('fetching and populating interday quotes');
-            return stocksPromise
-                .then(that.fetchPromise.bind(that))
-                .then(that.insertPromise.bind(that, interdayQuotesCollectionName))
-                .then(function (value) {
-                    var population = {'date': date};
-                    return that.insertPromise(populationCollectionName, population);
-                })
-                .catch(console.log);
-        }
-        else {
-            console.log('already populated ' + value.date);
-        }
-    });
-}
 
 /**
 * Main processing function for communicating with Yahoo Finance API
@@ -155,12 +28,12 @@ StockFetcher.prototype.updateUsingPromise = function (stocksCollectionName, intr
 * return a promise of a list of quotes.
 */
 StockFetcher.fetch = function (symbols) {
+    console.log("going to fetch quotes");
     var query = encodeURIComponent('select * from yahoo.finance.quotes ' +
     'where symbol in (\'' + symbols.join(',') + '\')');
     var urlWithParams = StockFetcher.BASE + '?' + 'q=' + query + '&format=json&diagnostics=true' + '&env=' +
         encodeURIComponent('store://datatables.org/alltableswithkeys');
     var completeUrl = urlWithParams + '&callback=';
-
     var promise = new Promise(function (resolve, reject) {
         http.get(completeUrl, function (res) {
             console.log(completeUrl);
@@ -200,6 +73,108 @@ StockFetcher.isMarketOpen = function (now) {
     else {
         return false;
     }
+}
+
+StockFetcher.prototype.updateUsingPromise = function (stocksCollectionName, intradayQuotesCollectionname,
+                                                      interdayQuotesCollectionName, populationCollectionName) {
+    var that = this;
+    //var stocksPromise = this.findOnePromise(stocksCollectionName, {}).then(function (value) {
+    //    return value.symbols;
+    //});
+    var stocksPromise = this.dbConnPromise.then(function (db) {
+        return db.collectionAsync(stocksCollectionName);
+    }).then(function (collection) {
+        return collection.findOneAsync();
+    }).then(function(record){
+        return record.symbols;
+    });
+    if (StockFetcher.isMarketOpen()) {
+        return stocksPromise
+            .then(StockFetcher.fetch) //fetch stock quotes
+            .then(function (quotes) { //insert into intraday collection
+                return this.dbConnPromise.then(function (db) {
+                    return db.collectionAsync(intradayQuotesCollectionname)
+                }).then(function (collection) {
+                    return collection.insertManyAsync(quotes);
+                })
+            });
+    }
+    var now = moment().utcOffset(-4);
+    //var date = [now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()].join('-');
+    if (now.hours() < 10) { //next early morning
+        now.subtract(1, 'days');
+    }
+    var date = now.format('YYYY-MM-DD');
+    //var populationPromise = this.findOnePromise(populationCollectionName, );
+    var populationPromise = this.dbConnPromise.then(function (db) {
+        return db.collectionAsync(populationCollectionName)
+    }).then(function (collection) {
+        return collection.findOneAsync({'date': date});
+    })
+    //Resume
+    return populationPromise.then(function (value) {
+        if (!value) {
+            console.log('fetching and populating interday quotes');
+            return stocksPromise
+                .then(StockFetcher.fetch)
+                .then(function(quotes){
+                    return that.dbConnPromise
+                        .then(function (db) {
+                            return db.collectionAsync(interdayQuotesCollectionName);
+                        })
+                        .then(function (collection) {
+                            return collection.insertMany(quotes);
+                        });
+                })
+                .then(function () {
+                    var population = {'date': date};
+                    return that.dbConnPromise
+                        .then(function (db) {
+                            return db.collectionAsync(populationCollectionName);
+                        })
+                        .then(function (collection) {
+                            return collection.insertOne(population);
+                        });
+                })
+                .catch(console.log);
+        }
+        else {
+            console.log('already populated ' + value.date);
+        }
+    });
+}
+
+/**
+ *
+ * @param user one user has multiple watch lists, each of them has multiple stock symbols
+ */
+StockFetcher.prototype.createUser = function(userId, firstName, lastName) {
+    var user = {
+        'userId' : userId,
+        'firstName' : firstName,
+        'lastName' : lastName,
+        'watchlists' : {}
+    };
+    return this.dbConnPromise
+        .then(function (dbConn) {
+            return dbConn.collectionAsync('User');
+        })
+        .then(function (collection) {
+            return collection.insertOne(user);
+        });
+}
+
+StockFetcher.prototype.createWatchList = function(userId, watchListName) {
+    return this.dbConnPromise
+        .then(function (dbConn) {
+            return dbConn.collectionAsync('User');
+        })
+        .then(function (collection) {
+            return collection.findOne({'userId' : userId});
+        })
+        .then(function (user){
+            user.watchlists.watchListName...
+        })
 }
 
 
